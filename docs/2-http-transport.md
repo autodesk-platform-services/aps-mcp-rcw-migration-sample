@@ -57,7 +57,7 @@ What this does:
 ```json
 {
   "servers": {
-    "APS MCP Server (Advanced)": {
+    "APS MCP RCW Migration Sample": {
       "type": "http",
       "url": "http://localhost:3000/mcp"
     }
@@ -79,7 +79,7 @@ The server is only reachable through the forwarded address of port `3000`, so us
 ```json
 {
   "servers": {
-    "APS MCP Server (Advanced)": {
+    "APS MCP RCW Migration Sample": {
       "type": "http",
       "url": "https://${env:CODESPACE_NAME}-3000.${env:GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}/mcp"
     }

@@ -1,6 +1,6 @@
 {
   "servers": {
-    "APS MCP Server (Advanced)": {
+    "APS MCP RCW Migration Sample": {
       "type": "http",
       "url": "http://localhost:3000/mcp"
     }
