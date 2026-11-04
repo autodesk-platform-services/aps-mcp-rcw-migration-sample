@@ -1,78 +1,78 @@
-# RCW 模型迁移功能 — 开发实现文档
+# RCW model migration—implementation document
 
-把 [aps-revit-rcw-migrate-automation](https://github.com/autodesk-platform-services/aps-revit-rcw-migrate-automation) 的迁移能力移植到本 MCP 服务器：用户在 AI 客户端里用自然语言选择源 RCW 模型和目标文件夹，服务器通过 Design Automation for Revit 执行 `SaveAsCloudModel`，并用 MCP App 页面实时展示迁移进度。
+Port the migration capability of [aps-revit-rcw-migrate-automation](https://github.com/autodesk-platform-services/aps-revit-rcw-migrate-automation) to this MCP server. In an AI client, the user picks a source RCW model and a target folder in natural language. The server runs `SaveAsCloudModel` through Design Automation for Revit and shows live migration progress in an MCP App page.
 
-> **实现状态（截至当前提交）**：已实现 `check-migrator-setup`、`migrate-rcw-model`、`get-migration-status`、`cancel-migration`、`migration.html`，以及相关的 `list-folder-contents`（返回 `extensionType`）与 `create-folder`。**`migrate-rcw-folder`（§8.3）尚未实现**——迁移整个文件夹时，目前由模型对每个 RCW 模型分别调用 `migrate-rcw-model`。仓库内仅包含 Revit 2025 / 2026 的插件包（`bundles/`），2027 需自行编译。
+> **Implementation status (as of the current commit)**: `check-migrator-setup`, `migrate-rcw-model`, `get-migration-status`, `cancel-migration` and `migration.html` are implemented, along with the related `list-folder-contents` (which returns `extensionType`) and `create-folder`. **`migrate-rcw-folder` (§8.3) is not implemented yet.** To migrate a whole folder, the model currently calls `migrate-rcw-model` once for each RCW model. The repo contains plugin bundles for Revit 2025 and 2026 only (`bundles/`); you must build 2027 yourself.
 
-## 1. 已确认的设计决策
+## 1. Confirmed design decisions
 
-| # | 决策 | 结论 |
+| # | Decision | Outcome |
 |---|---|---|
-| 1 | AppBundle / Activity 配置方式 | 一次性脚本 `npm run setup-da`（管理员执行）+ 只读工具 `check-migrator-setup`。不暴露写操作给 MCP 用户 |
-| 2 | 状态获取方式 | 轮询 Design Automation workitem 状态，不使用 webhook / ngrok / socket.io |
-| 3 | Revit 版本 | 多版本支持：2025、2026、2027（每个版本一套 AppBundle + Activity） |
-| 4 | 进度展示 | 新增 MCP App 页面 `migration.html`，在客户端内展示迁移进度 |
+| 1 | How to configure the AppBundle and Activity | A one-time script, `npm run setup-da` (run by an administrator), plus the read-only tool `check-migrator-setup`. No write operations are exposed to MCP users |
+| 2 | How to get status | Poll the Design Automation workitem status. No webhook, ngrok or socket.io |
+| 3 | Revit versions | Multi-version support: 2025, 2026 and 2027 (one AppBundle and one Activity per version) |
+| 4 | Progress display | A new MCP App page, `migration.html`, shows migration progress inside the client |
 
-## 2. 原仓库功能映射
+## 2. Mapping of the original repo's features
 
-| 原仓库 | 作用 | 本项目中的去向 |
+| Original repo | Purpose | Where it goes in this project |
 |---|---|---|
-| `RCWMigratorPlugin/Command.cs` | DA 中打开模型，读取 `params.json`，调用 `doc.SaveAsCloudModel(accountGuid, projectGuid, folderUrn, modelName)` | C# 逻辑**不改**；源码放到 `plugin/` 作参考，按 Revit 版本编译出 bundle zip |
-| `routes/automationConfig.js` | 创建 / 更新 AppBundle、Activity、Alias | `scripts/setup-da.js`（改为幂等，支持多版本） |
-| `routes/revitAutomation.js` POST | 校验 C4RModel、取最新版本 storage、提交 workitem | 工具 `migrate-rcw-model` / `migrate-rcw-folder` |
-| `routes/revitAutomation.js` GET / DELETE | 查询 / 取消 workitem | 工具 `get-migration-status` / `cancel-migration` |
-| `/callback/designautomation` + socket.io | 完成通知推送到网页 | 删除；由 MCP App 页面调用 `get-migration-status` 轮询 |
-| `routes/common/aps.js` `getHubFromProjectId` | 遍历所有 hub 找目标 hub | 删除；目标 `hubId` 由模型从 `list-hubs-projects` 结果中直接传入 |
-| `wwwroot/` 前端（jQuery 树） | 选择源文件和目标文件夹 | 删除；由 `list-hubs-projects` / `list-folder-contents` 承担 |
-| `autodesk.forge.designautomation`、`request` | DA SDK、HTTP | 不引入（均已过时）；用 Node 内置 `fetch` / `FormData` 直接调用 DA v3 REST |
+| `RCWMigratorPlugin/Command.cs` | Opens the model in DA, reads `params.json`, calls `doc.SaveAsCloudModel(accountGuid, projectGuid, folderUrn, modelName)` | The C# logic is **unchanged**. The source goes in `plugin/` for reference, and is compiled into a bundle zip for each Revit version |
+| `routes/automationConfig.js` | Creates and updates the AppBundle, Activity and aliases | `scripts/setup-da.js` (made idempotent, with multi-version support) |
+| `routes/revitAutomation.js` POST | Validates the C4RModel, gets the latest version's storage, submits the workitem | Tools `migrate-rcw-model` and `migrate-rcw-folder` |
+| `routes/revitAutomation.js` GET / DELETE | Queries and cancels workitems | Tools `get-migration-status` and `cancel-migration` |
+| `/callback/designautomation` + socket.io | Pushes completion notifications to the web page | Removed. The MCP App page polls `get-migration-status` instead |
+| `routes/common/aps.js` `getHubFromProjectId` | Walks all hubs to find the target hub | Removed. The model passes the target `hubId` straight from the `list-hubs-projects` result |
+| `wwwroot/` front end (jQuery tree) | Selects the source file and target folder | Removed. `list-hubs-projects` and `list-folder-contents` take over |
+| `autodesk.forge.designautomation`, `request` | DA SDK, HTTP | Not brought in (both are outdated). The code calls the DA v3 REST API directly with Node's built-in `fetch` and `FormData` |
 
-## 3. 总体架构
+## 3. Overall architecture
 
 ```
-AI 客户端 ──MCP──► mcp.js（工具注册 + UI 资源）
+AI client ──MCP──► mcp.js (tool registration + UI resource)
                      │
-                     ├─ aps.js          用户 3-legged token：Data Management（查版本、校验类型、列目录）
-                     └─ automation.js   应用 2-legged token：Design Automation v3（提交 / 查询 / 取消 workitem）
+                     ├─ aps.js          User 3-legged token: Data Management (look up versions, validate type, list folders)
+                     └─ automation.js   App 2-legged token: Design Automation v3 (submit / query / cancel workitems)
                                            │
                                            ▼
-                                DA for Revit（revitcoreconsole + RCWMigrator.dll）
-                                           │ SaveAsCloudModel（使用随 workitem 传入的用户 3-legged token）
+                                DA for Revit (revitcoreconsole + RCWMigrator.dll)
+                                           │ SaveAsCloudModel (uses the user's 3-legged token passed with the workitem)
                                            ▼
-                                目标 ACC / BIM 360 项目文件夹
+                                Target ACC / BIM 360 project folder
 
-MCP App 页面 migration.html ──app.callServerTool('get-migration-status')──► mcp.js（每 5 秒轮询）
+MCP App page migration.html ──app.callServerTool('get-migration-status')──► mcp.js (polls every 5 seconds)
 ```
 
-两套 token：
+Two tokens:
 
-- **用户 3-legged token**（现有 OAuth 代理流程）：读取源模型版本信息；作为 `adsk3LeggedToken` 传给 workitem，让 Revit 以用户身份读取源模型、写入目标项目。
-- **应用 2-legged token**（新增，scope `code:all`）：调用 DA API。只在服务器端使用，永不下发到客户端或 MCP App 页面。
+- **User 3-legged token** (the existing OAuth proxy flow): reads the source model's version information. It is also passed to the workitem as `adsk3LeggedToken`, so Revit reads the source model and writes to the target project as the user.
+- **App 2-legged token** (new, scope `code:all`): calls the DA API. It is used only on the server and is never sent to the client or the MCP App page.
 
-## 4. 文件变更清单
+## 4. List of file changes
 
-| 文件 | 类型 | 内容 |
+| File | Type | Content |
 |---|---|---|
-| `automation.js` | 新增 | 2-legged token 缓存、`daFetch`、引擎/Activity 查询、workitem 提交/查询/取消、报告日志截取、作业登记表 |
-| `aps.js` | 修改 | 扩展 OAuth scopes；`getItemTip` 增加返回 `storageId`、`versionType`；`getFolderContents` 增加 `extensionType` 字段 |
-| `mcp.js` | 修改 | 注册 5 个新工具 + `migration` UI 资源 |
-| `migration.html` | 新增 | MCP App 进度页面 |
-| `scripts/setup-da.js` | 新增 | 多版本 AppBundle / Activity 幂等配置脚本 |
-| `bundles/RCWMigratorApp-2025.zip` 等 | 新增 | 各 Revit 版本的插件包 |
-| `plugin/` | 新增 | 插件 C# 源码（从原仓库复制，2027 需调整，见 §5） |
-| `package.json` | 修改 | 新增脚本 `"setup-da": "node --env-file-if-exists=.env scripts/setup-da.js"` |
-| `README.md` | 修改 | 新增环境变量与 `setup-da` 使用说明 |
+| `automation.js` | New | 2-legged token cache, `daFetch`, engine and Activity lookup, workitem submit/query/cancel, report log tail extraction, job registry |
+| `aps.js` | Modified | Extends the OAuth scopes. `getItemTip` also returns `storageId` and `versionType`. `getFolderContents` adds an `extensionType` field |
+| `mcp.js` | Modified | Registers 5 new tools and the `migration` UI resource |
+| `migration.html` | New | MCP App progress page |
+| `scripts/setup-da.js` | New | Idempotent multi-version AppBundle and Activity setup script |
+| `bundles/RCWMigratorApp-2025.zip` and others | New | Plugin bundle for each Revit version |
+| `plugin/` | New | Plugin C# source (copied from the original repo; 2027 needs adjustments, see §5) |
+| `package.json` | Modified | Adds the script `"setup-da": "node --env-file-if-exists=.env scripts/setup-da.js"` |
+| `README.md` | Modified | Adds the environment variables and `setup-da` usage |
 
-不新增任何 npm 依赖。
+No new npm dependencies are added.
 
-## 5. 插件包与多版本支持
+## 5. Plugin bundles and multi-version support
 
-### 5.1 现状
+### 5.1 Current state
 
-原仓库插件使用 `Autodesk.Revit.SDK 2026.0.0.9999` + `Autodesk.Forge.DesignAutomation.Revit 2026.0.0` 编译，目标框架 `net8.0-windows`；`PackageContents.xml` 声明 `SeriesMin="R2025" SeriesMax="R2026"`。原仓库用同一个 zip 服务 2025 和 2026 两个引擎。
+The original repo's plugin is built with `Autodesk.Revit.SDK 2026.0.0.9999` and `Autodesk.Forge.DesignAutomation.Revit 2026.0.0`, targeting `net8.0-windows`. `PackageContents.xml` declares `SeriesMin="R2025" SeriesMax="R2026"`. The original repo uses the same zip for both the 2025 and 2026 engines.
 
-### 5.2 版本配置
+### 5.2 Version configuration
 
-在 `automation.js` 中集中定义版本表，脚本和工具共用：
+Define the version table in one place in `automation.js`, shared by the script and the tools:
 
 ```js
 export const REVIT_VERSIONS = {
@@ -83,40 +83,40 @@ export const REVIT_VERSIONS = {
 export const DEFAULT_REVIT_VERSION = '2027';
 ```
 
-命名规则（`<nickname>` 默认为 `APS_CLIENT_ID`，`<alias>` 默认为 `dev`）：
+Naming rules (`<nickname>` defaults to `APS_CLIENT_ID`, `<alias>` defaults to `dev`):
 
-- AppBundle：`RCWMigrator<ver>AppBundle`，完整 ID `<nickname>.RCWMigrator<ver>AppBundle+<alias>`
-- Activity：`RCWMigrator<ver>Activity`，完整 ID `<nickname>.RCWMigrator<ver>Activity+<alias>`
+- AppBundle: `RCWMigrator<ver>AppBundle`, full ID `<nickname>.RCWMigrator<ver>AppBundle+<alias>`
+- Activity: `RCWMigrator<ver>Activity`, full ID `<nickname>.RCWMigrator<ver>Activity+<alias>`
 
-### 5.3 各版本插件包
+### 5.3 Plugin bundle for each version
 
-- **2025 / 2026**：直接使用原仓库的 `RCWMigratorApp.zip`，复制为 `RCWMigratorApp-2025.zip` 和 `RCWMigratorApp-2026.zip`。
-- **2027**：需要重新编译：
-  1. NuGet 引用改为 `Autodesk.Revit.SDK 2027.*` 和 `Autodesk.Forge.DesignAutomation.Revit 2027.*`。
-  2. `TargetFramework` 按 Revit 2027 要求调整（**待确认**：Revit 2027 API 要求的 .NET 版本）。
-  3. `PackageContents.xml` 改为 `SeriesMin="R2027" SeriesMax="R2027"`。
-  4. 在 Windows 上编译并打包为 `RCWMigratorApp-2027.zip`（zip 根目录为 `RCWMigratorApp.bundle/`）。
-- **前置验证**：调用 `GET /da/us-east/v3/engines`，确认 `Autodesk.Revit+2027` 已上线；`setup-da` 脚本遇到不存在的引擎时跳过并提示，不中断其他版本。
+- **2025 / 2026**: use the original repo's `RCWMigratorApp.zip` directly, copied as `RCWMigratorApp-2025.zip` and `RCWMigratorApp-2026.zip`.
+- **2027**: must be rebuilt:
+  1. Change the NuGet references to `Autodesk.Revit.SDK 2027.*` and `Autodesk.Forge.DesignAutomation.Revit 2027.*`.
+  2. Adjust `TargetFramework` to what Revit 2027 requires (**to be confirmed**: the .NET version the Revit 2027 API requires).
+  3. Change `PackageContents.xml` to `SeriesMin="R2027" SeriesMax="R2027"`.
+  4. Build on Windows and package as `RCWMigratorApp-2027.zip` (the zip root is `RCWMigratorApp.bundle/`).
+- **Prerequisite check**: call `GET /da/us-east/v3/engines` and confirm `Autodesk.Revit+2027` is live. When the `setup-da` script hits an engine that doesn't exist, it skips that version with a notice and doesn't stop the other versions.
 
-### 5.4 版本选择规则
+### 5.4 Version selection rules
 
-- `SaveAsCloudModel` 会把模型升级到引擎对应的 Revit 版本；**不能降级**。目标版本低于源模型版本时 workitem 会失败。
-- 工具参数 `revitVersion` 可选，默认 `2027`。工具描述中要说明这一点，让模型在用户未指定时使用最新版本。
-- 提交前校验所选版本对应的 Activity 已存在（缓存 `check` 结果 5 分钟），否则返回明确错误：「Revit 2027 迁移器尚未配置，请管理员运行 npm run setup-da」。
+- `SaveAsCloudModel` upgrades the model to the Revit version of the engine. It **can't downgrade**. If the target version is lower than the source model's version, the workitem fails.
+- The tool parameter `revitVersion` is optional and defaults to `2027`. The tool description must say so, so the model uses the latest version when the user doesn't specify one.
+- Before submitting, check that the Activity for the chosen version exists (cache the `check` result for 5 minutes). Otherwise, return a clear error: "The Revit 2027 migrator isn't configured yet. Ask an administrator to run npm run setup-da".
 
-## 6. 认证改动
+## 6. Authentication changes
 
-### 6.1 用户 3-legged scopes（`aps.js`）
+### 6.1 User 3-legged scopes (`aps.js`)
 
 ```js
 const SCOPES = [Scopes.DataRead, Scopes.DataWrite, Scopes.DataCreate, Scopes.AccountRead, Scopes.AccountWrite];
 ```
 
-与原仓库一致（原仓库为 `data:read data:write account:read account:write`，另加 `data:create` 以覆盖新建 item）。功能跑通后逐项去掉 `account:write` / `account:read` 验证是否必需，保留最小集合。
+This matches the original repo (`data:read data:write account:read account:write`), plus `data:create` to cover creating new items. Once the feature works, remove `account:write` and `account:read` one at a time to check whether they're required, and keep the minimum set.
 
-**影响**：已登录的用户需要重新授权一次（现有 token 不含写权限）。
+**Impact**: users who are already signed in must authorize again once (the existing token has no write permission).
 
-### 6.2 应用 2-legged token（`automation.js`）
+### 6.2 App 2-legged token (`automation.js`)
 
 ```js
 import { AuthenticationClient, Scopes } from '@aps_sdk/authentication';
@@ -133,31 +133,31 @@ export async function getAppToken() {
 }
 ```
 
-### 6.3 ACC 前提
+### 6.3 ACC prerequisite
 
-APS 应用的 Client ID 必须在**源和目标**两个 ACC / BIM 360 账户中添加为 Custom Integration，否则 Data Management 调用和 `SaveAsCloudModel` 都会失败。
+The APS app's Client ID must be added as a Custom Integration in **both the source and target** ACC / BIM 360 accounts. Otherwise, both the Data Management calls and `SaveAsCloudModel` fail.
 
-## 7. Design Automation 配置脚本（`scripts/setup-da.js`）
+## 7. Design Automation setup script (`scripts/setup-da.js`)
 
-用法：
+Usage:
 
 ```bash
-npm run setup-da                       # 配置所有版本
+npm run setup-da                       # Set up all versions
 npm run setup-da -- --versions 2026,2027
 ```
 
-每个版本的执行流程（幂等，可重复运行）：
+The flow for each version (idempotent, safe to run repeatedly):
 
-1. 查询 `GET /appbundles`：
-   - 不存在：`POST /appbundles` → `POST /appbundles/{id}/aliases`（alias 指向 v1）
-   - 已存在：`POST /appbundles/{id}/versions` → `PATCH /appbundles/{id}/aliases/{alias}`（指向新版本）
-2. 用返回的 `uploadParameters` 上传 zip：`multipart/form-data`，先放所有 `formData` 字段，**`file` 字段放最后**（S3 要求）。用 Node 内置 `FormData` + `Blob`。
-3. 查询 `GET /activities`：
-   - 不存在：`POST /activities` → `POST /activities/{id}/aliases`
-   - 已存在：`POST /activities/{id}/versions` → `PATCH` alias（与原仓库不同：原仓库已存在时直接跳过，导致修改 commandLine 后不生效）
-4. 输出每个版本的结果汇总表。
+1. Query `GET /appbundles`:
+   - Doesn't exist: `POST /appbundles` → `POST /appbundles/{id}/aliases` (the alias points to v1)
+   - Exists: `POST /appbundles/{id}/versions` → `PATCH /appbundles/{id}/aliases/{alias}` (points to the new version)
+2. Upload the zip with the returned `uploadParameters`: `multipart/form-data`, with all the `formData` fields first and the **`file` field last** (S3 requires this). Use Node's built-in `FormData` and `Blob`.
+3. Query `GET /activities`:
+   - Doesn't exist: `POST /activities` → `POST /activities/{id}/aliases`
+   - Exists: `POST /activities/{id}/versions` → `PATCH` the alias (unlike the original repo, which skips an existing Activity, so changes to `commandLine` never took effect)
+4. Print a summary table of the result for each version.
 
-Activity 定义：
+Activity definition:
 
 ```js
 {
@@ -173,17 +173,17 @@ Activity 定义：
 }
 ```
 
-DA 基础地址：`https://developer.api.autodesk.com/da/us-east/v3`。
+DA base URL: `https://developer.api.autodesk.com/da/us-east/v3`.
 
-## 8. MCP 工具设计
+## 8. MCP tool design
 
-所有工具沿用 `mcp.js` 现有风格：`server.registerTool(name, { title, description, inputSchema: z.object(...), annotations }, handler)`。
+All tools follow the existing style in `mcp.js`: `server.registerTool(name, { title, description, inputSchema: z.object(...), annotations }, handler)`.
 
-### 8.1 `check-migrator-setup`（只读）
+### 8.1 `check-migrator-setup` (read-only)
 
-- 输入：无
-- 逻辑：查询引擎列表与本应用的 Activity 列表，对每个版本给出状态
-- 输出：
+- Input: none
+- Logic: query the engine list and this app's Activity list, and report the status of each version
+- Output:
 
 ```json
 [
@@ -194,22 +194,22 @@ DA 基础地址：`https://developer.api.autodesk.com/da/us-east/v3`。
 
 ### 8.2 `migrate-rcw-model`
 
-| 参数 | 类型 | 说明 |
+| Parameter | Type | Description |
 |---|---|---|
-| `sourceProjectId` | string | 源项目 ID（`b.` 前缀） |
-| `sourceItemId` | string | 源 RCW 模型 item ID |
-| `targetHubId` | string | 目标 hub ID（`b.` 前缀） |
-| `targetProjectId` | string | 目标项目 ID |
-| `targetFolderId` | string | 目标文件夹 URN |
-| `targetName` | string? | 目标模型名，默认沿用源文件名 |
-| `revitVersion` | enum `2025`/`2026`/`2027`? | 默认 `2027` |
+| `sourceProjectId` | string | Source project ID (`b.` prefix) |
+| `sourceItemId` | string | Source RCW model item ID |
+| `targetHubId` | string | Target hub ID (`b.` prefix) |
+| `targetProjectId` | string | Target project ID |
+| `targetFolderId` | string | Target folder URN |
+| `targetName` | string? | Target model name; defaults to the source file name |
+| `revitVersion` | enum `2025`/`2026`/`2027`? | Defaults to `2027` |
 
-处理流程：
+Processing flow:
 
-1. `getItemTip(sourceProjectId, sourceItemId)` 获取最新版本。
-2. 校验 `versionType === 'versions:autodesk.bim360:C4RModel'`，否则返回错误「仅支持 Revit Cloud Worksharing 模型」。
-3. 校验 `revitVersion` 对应 Activity 已就绪（§5.4）。
-4. 组装 workitem（与原仓库参数格式保持一致）：
+1. `getItemTip(sourceProjectId, sourceItemId)` gets the latest version.
+2. Check that `versionType === 'versions:autodesk.bim360:C4RModel'`. Otherwise, return the error "Only Revit Cloud Worksharing models are supported".
+3. Check that the Activity for `revitVersion` is ready (§5.4).
+4. Assemble the workitem (keeping the parameter format of the original repo):
 
 ```js
 const params = {
@@ -229,10 +229,10 @@ const workitem = {
 };
 ```
 
-> 原仓库为了嵌入 data URL 把双引号替换为单引号。实现时先按标准 JSON（`encodeURIComponent` 编码）测试；若插件解析失败，再回退为原仓库的单引号写法。
+> To embed the data URL, the original repo replaces double quotes with single quotes. During implementation, test with standard JSON (encoded with `encodeURIComponent`) first. If the plugin fails to parse it, fall back to the original repo's single-quote form.
 
-5. `POST /workitems`，把作业写入作业登记表（§9）。
-6. 返回 `structuredContent`（供 UI 渲染）和简短文本：
+5. `POST /workitems`, and write the job to the job registry (§9).
+6. Return `structuredContent` (for the UI to render) and a short text:
 
 ```json
 {
@@ -250,19 +250,19 @@ const workitem = {
 - `_meta: { ui: { resourceUri: 'ui://aps-mcp/migration.html' } }`
 - `annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false }`
 
-### 8.3 `migrate-rcw-folder`（设计中，尚未实现）
+### 8.3 `migrate-rcw-folder` (in design, not implemented yet)
 
-- 输入：`sourceProjectId`、`sourceFolderId`，加上 §8.2 中的目标参数与 `revitVersion`（无 `targetName`）
-- 逻辑：列出源文件夹（**不递归**），筛选 `extensionType === 'items:autodesk.bim360:C4RModel'`，**最多 5 个**（保留原仓库限制，超出时返回错误并列出文件数，让用户缩小范围）；逐个复用 §8.2 的提交逻辑
-- 输出：与 §8.2 相同结构，`jobs` 包含多项；另附 `skipped`（非 RCW 文件名列表）
-- 同样绑定 `migration.html`
+- Input: `sourceProjectId`, `sourceFolderId`, plus the target parameters from §8.2 and `revitVersion` (no `targetName`)
+- Logic: list the source folder (**not recursive**) and keep items with `extensionType === 'items:autodesk.bim360:C4RModel'`, **up to 5** (the original repo's limit is kept; if there are more, return an error with the file count so the user can narrow the scope). Reuse the submission logic from §8.2 for each one.
+- Output: the same structure as §8.2, with multiple entries in `jobs`, plus `skipped` (the list of non-RCW file names)
+- Also bound to `migration.html`
 
-### 8.4 `get-migration-status`（只读）
+### 8.4 `get-migration-status` (read-only)
 
-- 输入：`workItemIds: string[]`
-- 逻辑：校验每个 ID 属于当前用户（§9），调用 `GET /workitems/{id}`
-- 失败状态（`failed*`）时，下载 `reportUrl` 并截取**最后 40 行**放入 `reportTail`，方便模型解释失败原因
-- 输出：
+- Input: `workItemIds: string[]`
+- Logic: check that each ID belongs to the current user (§9), then call `GET /workitems/{id}`
+- On a failure status (`failed*`), download `reportUrl` and put the **last 40 lines** in `reportTail`, so the model can explain the cause of the failure
+- Output:
 
 ```json
 {
@@ -276,41 +276,41 @@ const workitem = {
 }
 ```
 
-- 同时供模型和 MCP App 页面调用：`_meta: { ui: { visibility: ['model', 'app'] } }`
+- Callable by both the model and the MCP App page: `_meta: { ui: { visibility: ['model', 'app'] } }`
 
-DA 状态值：`pending`、`inprogress`、`success`、`cancelled`、`failedDownload`、`failedInstructions`、`failedUpload`、`failedUploadOptional`、`failedLimitDataSize`、`failedLimitProcessingTime`。终态 = 除 `pending` / `inprogress` 外的所有值。
+DA status values: `pending`, `inprogress`, `success`, `cancelled`, `failedDownload`, `failedInstructions`, `failedUpload`, `failedUploadOptional`, `failedLimitDataSize`, `failedLimitProcessingTime`. A terminal state is any value other than `pending` or `inprogress`.
 
 ### 8.5 `cancel-migration`
 
-- 输入：`workItemId`
-- 逻辑：校验归属后 `DELETE /workitems/{id}`；更新登记表状态为 `cancelled`
-- 说明：已进入 `inprogress` 的任务可能无法取消，返回信息中注明
-- `annotations: { destructiveHint: true }`；`_meta.ui.visibility: ['model', 'app']`（页面上的取消按钮会调用）
+- Input: `workItemId`
+- Logic: after checking ownership, `DELETE /workitems/{id}`, and update the registry status to `cancelled`
+- Note: a task that has already reached `inprogress` may not be cancellable; say so in the returned message
+- `annotations: { destructiveHint: true }`; `_meta.ui.visibility: ['model', 'app']` (the Cancel button on the page calls it)
 
-### 8.6 现有工具改动
+### 8.6 Changes to existing tools
 
-另新增 `create-folder`（`projectId`、`parentFolderId`、`folderPath`）：在目标项目中创建文件夹或嵌套路径，已存在的层级会被复用，仅在用户明确要求时调用。迁移前可用它建好目标目录结构。
+`create-folder` is also new (`projectId`, `parentFolderId`, `folderPath`). It creates a folder or a nested path in the target project, reusing levels that already exist, and is called only when the user explicitly asks. Use it to build the target directory structure before a migration.
 
-`list-folder-contents` 输出每项新增 `extensionType`（`item.attributes.extension.type`），模型据此识别 RCW 模型（`items:autodesk.bim360:C4RModel`）。
+`list-folder-contents` adds `extensionType` (`item.attributes.extension.type`) to each entry. The model uses it to recognize RCW models (`items:autodesk.bim360:C4RModel`).
 
-## 9. 作业登记表与安全
+## 9. Job registry and security
 
-`automation.js` 中维护内存 `Map<workItemId, Job>`：
+`automation.js` keeps an in-memory `Map<workItemId, Job>`:
 
 ```js
 { workItemId, ownerKey, fileName, revitVersion, source, target, status, submittedAt, finishedAt }
 ```
 
-- **归属校验**：`ownerKey` 取当前 MCP 会话的 `clientId` + APS 用户 ID（通过 `getUserInfo` 获取一次后缓存）。`get-migration-status` / `cancel-migration` 只允许操作自己的作业，防止用户 A 查询或取消用户 B 的任务。
-- 服务器重启后登记表丢失：对未知 ID 返回「作业不存在或服务器已重启」，**不**回退为无校验查询。
-- 终态作业保留 24 小时后清理。
-- 2-legged token、用户 token 均不出现在任何工具返回值和 UI 中。
+- **Ownership check**: `ownerKey` is the current MCP session's `clientId` plus the APS user ID (fetched once with `getUserInfo` and cached). `get-migration-status` and `cancel-migration` only operate on the user's own jobs, so user A can't query or cancel user B's tasks.
+- The registry is lost when the server restarts. For an unknown ID, return "Job not found, or the server was restarted". Do **not** fall back to a query without the ownership check.
+- Terminal jobs are kept for 24 hours and then cleaned up.
+- Neither the 2-legged token nor the user token appears in any tool return value or in the UI.
 
-## 10. MCP App 进度页面（`migration.html`）
+## 10. MCP App progress page (`migration.html`)
 
-### 10.1 资源注册（`mcp.js`）
+### 10.1 Resource registration (`mcp.js`)
 
-参照现有 viewer 资源：
+Follow the existing viewer resource:
 
 ```js
 const MIGRATION_RESOURCE_URI = 'ui://aps-mcp/migration.html';
@@ -324,80 +324,80 @@ server.registerResource('migration', MIGRATION_RESOURCE_URI, { mimeType: 'text/h
 }));
 ```
 
-页面不直接访问任何 APS 域名，所有数据都经由 `callServerTool` 获取，所以 `connectDomains` 为空。
+The page doesn't access any APS domain directly. All data comes through `callServerTool`, so `connectDomains` is empty.
 
-### 10.2 页面行为
+### 10.2 Page behavior
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│ RCW 模型迁移 → Revit 2027              2/3 完成          │
+│ RCW model migration → Revit 2027        2/3 complete     │
 ├──────────────────────────────────────────────────────────┤
-│ Tower.rvt        ● 成功       00:03:12                   │
-│ Podium.rvt       ◐ 处理中     00:01:40        [取消]     │
-│ Site.rvt         ✕ 失败       failedInstructions [详情]  │
+│ Tower.rvt        ● Succeeded     00:03:12                │
+│ Podium.rvt       ◐ In progress   00:01:40      [Cancel]  │
+│ Site.rvt         ✕ Failed        failedInstructions [Details] │
 └──────────────────────────────────────────────────────────┘
 ```
 
-1. `app.ontoolresult` 接收 `migrate-rcw-model` / `migrate-rcw-folder` 返回的 `structuredContent.jobs`，渲染列表。
-2. 每 5 秒调用 `app.callServerTool({ name: 'get-migration-status', arguments: { workItemIds } })`，只轮询未到终态的作业；全部到终态后停止。
-3. 状态显示：`pending`=排队中、`inprogress`=处理中、`success`=成功、`cancelled`=已取消、`failed*`=失败（显示具体状态码）；每行显示已用时间。
-4. 失败行的「详情」展开 `reportTail`。
-5. `pending` / `inprogress` 行显示「取消」按钮 → `callServerTool('cancel-migration')`。
-6. 全部完成后调用 `app.updateModelContext()`，写入汇总文本（如「3 个模型中 2 个成功，Site.rvt 失败：failedInstructions」），让模型能直接回答后续问题。
-7. 轮询失败（网络错误）时指数退避（5s → 10s → 20s，上限 60s），页面顶部显示提示，不中断。
-8. 样式保持简洁，适配客户端浅色和深色主题（使用 `prefers-color-scheme`）。
+1. `app.ontoolresult` receives the `structuredContent.jobs` returned by `migrate-rcw-model` and `migrate-rcw-folder`, and renders the list.
+2. Every 5 seconds, call `app.callServerTool({ name: 'get-migration-status', arguments: { workItemIds } })`, polling only jobs that haven't reached a terminal state. Stop once all jobs are terminal.
+3. Status display: `pending` = queued, `inprogress` = in progress, `success` = succeeded, `cancelled` = cancelled, `failed*` = failed (shows the specific status code). Each row shows the elapsed time.
+4. The Details button on a failed row expands `reportTail`.
+5. Rows in `pending` or `inprogress` show a Cancel button → `callServerTool('cancel-migration')`.
+6. When all jobs finish, call `app.updateModelContext()` and write a summary text (for example, "2 of 3 models succeeded; Site.rvt failed: failedInstructions"), so the model can answer follow-up questions directly.
+7. If polling fails (network error), back off exponentially (5s → 10s → 20s, capped at 60s) and show a notice at the top of the page without stopping.
+8. Keep the styling simple and suited to both the light and dark client themes (use `prefers-color-scheme`).
 
-## 11. 环境变量
+## 11. Environment variables
 
-| 变量 | 必填 | 默认值 | 说明 |
+| Variable | Required | Default | Description |
 |---|---|---|---|
-| `APS_CLIENT_ID` / `APS_CLIENT_SECRET` | 是 | — | 已有 |
-| `APS_DA_NICKNAME` | 否 | `APS_CLIENT_ID` | APS 应用设置了 DA nickname 时使用 |
-| `APS_DA_ALIAS` | 否 | `dev` | AppBundle / Activity 的 alias |
-| `APS_DA_REGION` | 否 | `us-east` | DA 区域 |
+| `APS_CLIENT_ID` / `APS_CLIENT_SECRET` | Yes | — | Existing |
+| `APS_DA_NICKNAME` | No | `APS_CLIENT_ID` | Use when the APS app has a DA nickname set |
+| `APS_DA_ALIAS` | No | `dev` | Alias for the AppBundle and Activity |
+| `APS_DA_REGION` | No | `us-east` | DA region |
 
-不再需要原仓库的 `APS_WEBHOOK_URL`、`APS_CALLBACK_URL`、`SERVER_SESSION_SECRET`。
+The original repo's `APS_WEBHOOK_URL`, `APS_CALLBACK_URL` and `SERVER_SESSION_SECRET` are no longer needed.
 
-## 12. 实施步骤
+## 12. Implementation steps
 
-| 阶段 | 内容 | 完成标准 |
+| Phase | Content | Done when |
 |---|---|---|
-| 1 | 复制插件源码与 2025/2026 zip；实现 `automation.js` 基础部分（token、`daFetch`）与 `setup-da.js` | `npm run setup-da -- --versions 2026` 成功；DA 中可见 bundle 与 activity |
-| 2 | 实现 `check-migrator-setup` | 工具返回各版本状态正确 |
-| 3 | 扩展 scopes；`aps.js` 增加 `storageId` / `versionType` / `extensionType` | 重新登录后 `list-folder-contents` 能识别 RCW 模型 |
-| 4 | 实现 `migrate-rcw-model`、`get-migration-status`、`cancel-migration`（先只返回文本） | 端到端迁移一个模型成功，目标文件夹出现新模型 |
-| 5 | 实现 `migration.html` 并绑定到迁移工具 | 客户端内看到实时进度，取消按钮可用，完成后模型能读到汇总 |
-| 6 | 实现 `migrate-rcw-folder` | 一次迁移 2–5 个模型，进度页面正确显示多行 |
-| 7 | 编译 2027 插件包，`setup-da -- --versions 2027` | 2027 迁移端到端成功 |
-| 8 | 精简 scopes，更新 README | 最小 scope 集合下全部用例通过 |
+| 1 | Copy the plugin source and the 2025/2026 zips; implement the basics of `automation.js` (token, `daFetch`) and `setup-da.js` | `npm run setup-da -- --versions 2026` succeeds; the bundle and activity are visible in DA |
+| 2 | Implement `check-migrator-setup` | The tool returns the correct status for each version |
+| 3 | Extend the scopes; add `storageId` / `versionType` / `extensionType` to `aps.js` | After signing in again, `list-folder-contents` recognizes RCW models |
+| 4 | Implement `migrate-rcw-model`, `get-migration-status` and `cancel-migration` (text-only at first) | One model migrates end to end, and the new model appears in the target folder |
+| 5 | Implement `migration.html` and bind it to the migration tools | Live progress shows in the client, the Cancel button works, and the model can read the summary when it finishes |
+| 6 | Implement `migrate-rcw-folder` | 2–5 models migrate in one go, and the progress page shows multiple rows correctly |
+| 7 | Build the 2027 plugin bundle, run `setup-da -- --versions 2027` | 2027 migration succeeds end to end |
+| 8 | Trim the scopes, update the README | All use cases pass with the minimum scope set |
 
-## 13. 测试用例
+## 13. Test cases
 
-测试环境：DAS - Canada hub → `AU 2026 RCW Demo Project` → `Project Files`（源：`Sample -001`，目标：`AU 2026 Demo`）。
+Test environment: DAS - Canada hub → `AU 2026 RCW Demo Project` → `Project Files` (source: `Sample -001`, target: `AU 2026 Demo`).
 
-| # | 场景 | 预期 |
+| # | Scenario | Expected |
 |---|---|---|
-| 1 | 迁移单个 RCW 模型到同项目另一文件夹（2026） | `success`，目标文件夹出现同名模型 |
-| 2 | 跨项目迁移（同 hub） | `success` |
-| 3 | 默认版本（不传 `revitVersion`） | 使用 2027 |
-| 4 | 源为普通 RVT / PDF | 提交前拒绝，提示仅支持 RCW |
-| 5 | 目标版本低于源模型版本 | workitem 失败，`reportTail` 包含原因，模型能解释 |
-| 6 | 用户对目标文件夹无写权限 | workitem 失败，错误信息可读 |
-| 7 | 目标版本 Activity 未配置 | 提交前拒绝，提示运行 `setup-da` |
-| 8 | 文件夹迁移，含 3 个 RCW + 2 个其他文件 | 提交 3 个，`skipped` 列出 2 个 |
-| 9 | 文件夹内 RCW 超过 5 个 | 拒绝并提示 |
-| 10 | 在 `pending` 状态取消 | 状态变为 `cancelled`，页面同步 |
-| 11 | 用另一账号查询/取消他人 workItemId | 拒绝 |
-| 12 | 服务器重启后查询旧 workItemId | 返回「作业不存在或服务器已重启」 |
-| 13 | `setup-da` 重复运行 | 生成新版本并更新 alias，无报错 |
+| 1 | Migrate one RCW model to another folder in the same project (2026) | `success`, and a model with the same name appears in the target folder |
+| 2 | Migrate across projects (same hub) | `success` |
+| 3 | Default version (no `revitVersion`) | Uses 2027 |
+| 4 | Source is a regular RVT or PDF | Rejected before submission, with a message that only RCW is supported |
+| 5 | Target version is lower than the source model's version | The workitem fails, `reportTail` contains the cause, and the model can explain it |
+| 6 | The user has no write permission on the target folder | The workitem fails with a readable error message |
+| 7 | Activity for the target version isn't configured | Rejected before submission, with a message to run `setup-da` |
+| 8 | Folder migration with 3 RCW and 2 other files | 3 are submitted, and `skipped` lists the 2 |
+| 9 | More than 5 RCW models in the folder | Rejected with a message |
+| 10 | Cancel while `pending` | The status changes to `cancelled`, and the page stays in sync |
+| 11 | Query or cancel someone else's workItemId from another account | Rejected |
+| 12 | Query an old workItemId after a server restart | Returns "Job not found, or the server was restarted" |
+| 13 | Run `setup-da` repeatedly | Creates a new version and updates the alias, with no errors |
 
-## 14. 风险与待确认事项
+## 14. Risks and open items
 
-| 项 | 说明 | 应对 |
+| Item | Description | Response |
 |---|---|---|
-| Revit 2027 引擎与 .NET 版本 | 需确认 DA 已提供 `Autodesk.Revit+2027`，以及 2027 插件的目标框架 | 阶段 7 前查询 `/engines` 并查阅 Revit 2027 API 文档 |
-| 用户 token 有效期约 1 小时 | 作为 `adsk3LeggedToken` 传入，大模型排队 + 处理超过 1 小时可能失败 | 提交时获取最新 token；在工具描述中提示大模型风险；后续可评估 DA 对 token 刷新的支持 |
-| DA 计费 | 每个 workitem 消耗 APS Flex token | 保留单次最多 5 个文件的限制；README 中注明 |
-| 内存登记表 | 重启丢失，多实例部署不共享 | 当前为 workshop 规模，可接受；生产部署时改用持久化存储 |
-| `inputParams` data URL 格式 | 标准 JSON 与原仓库单引号写法的兼容性 | 阶段 4 实测确认 |
-| 链接模型 | 原仓库明确不支持迁移链接的 Revit 模型 | 在工具描述中注明 |
+| Revit 2027 engine and .NET version | Need to confirm DA offers `Autodesk.Revit+2027`, and the target framework of the 2027 plugin | Before phase 7, query `/engines` and check the Revit 2027 API documentation |
+| User token lifetime is about 1 hour | The token is passed in as `adsk3LeggedToken`, so a large model that queues and processes for more than 1 hour may fail | Get a fresh token at submission; mention the risk for large models in the tool description; later, evaluate DA's support for token refresh |
+| DA billing | Each workitem consumes APS Flex tokens | Keep the limit of 5 files per call; note it in the README |
+| In-memory registry | Lost on restart, and not shared across multiple instances | Acceptable at workshop scale; use persistent storage for a production deployment |
+| `inputParams` data URL format | Compatibility of standard JSON with the original repo's single-quote form | Confirm by testing in phase 4 |
+| Linked models | The original repo explicitly doesn't support migrating linked Revit models | State this in the tool description |
