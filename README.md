@@ -6,7 +6,7 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server that e
 
 ## Demo video
 
-[![Demo: migrating an RCW model from chat](https://img.youtube.com/vi/S1aHHh9c7N0/maxresdefault.jpg)](https://youtu.be/S1aHHh9c7N0)
+[![Demo: migrating an RCW model from chat](https://img.youtube.com/vi/S1aHHh9c7N0/hqdefault.jpg)](https://youtu.be/S1aHHh9c7N0)
 
 Watch the demo on [YouTube](https://youtu.be/S1aHHh9c7N0).
 
@@ -100,7 +100,7 @@ Because `/mcp` is guarded by bearer auth, a spec-compliant client discovers the 
 index.js          Entry point—Express app, MCP handler, OAuth proxy router, bearer guard on /mcp
 mcp.js            MCP server factory—registers tools + the viewer and migration resources, never calls server.connect()
 aps.js            APS layer—3-legged OAuth provider + Data Management helpers (hubs, folders, item tips, folder creation)
-automation.js     Design Automation layer—2-legged token, bundle/activity setup, workitem submit/status/cancel, in-memory job registry
+automation.js     Automation layer—2-legged token, bundle/activity setup, workitem submit/status/cancel, in-memory job registry
 migration-logic.js  Pure helpers for migration.html—inlined into the page by mcp.js and imported directly by the tests
 proxy.js          OAuth authorization server in front of /mcp (demo-only, see below)
 viewer.html       Self-contained APS Viewer panel, served as an MCP app resource
